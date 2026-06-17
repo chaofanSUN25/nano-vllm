@@ -1,4 +1,5 @@
 from collections import deque
+import random
 
 from nanovllm.config import Config
 from nanovllm.engine.sequence import Sequence, SequenceStatus
@@ -15,6 +16,13 @@ class Scheduler:
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
+        
+        # Request drop mechanism
+        self.drop_enabled = False
+        self.drop_probability = 0.3  # 30% chance to drop requests when congestion detected
+        self.congestion_detected = False
+        self.dropped_sequences = []
+        self.step_counter = 0
 
     def is_finished(self):
         return not self.waiting and not self.running
@@ -25,10 +33,24 @@ class Scheduler:
     def schedule(self) -> tuple[list[Sequence], bool]:
         scheduled_seqs = []
         num_batched_tokens = 0
+        
+        # Simulate congestion detection for demo
+        self.step_counter += 1
+        if self.drop_enabled and self.step_counter > 3:  # After step 3, simulate congestion
+            self.congestion_detected = random.choice([True, False])
+            if self.congestion_detected:
+                print(f"[Congestion Detected] Step {self.step_counter}: System overloaded, considering request drops")
 
         # prefill
         while self.waiting and len(scheduled_seqs) < self.max_num_seqs:
             seq = self.waiting[0]
+            
+            # Check if we should drop this request
+            if self.drop_enabled and self.congestion_detected and self._should_drop_request(seq):
+                self._drop_request(seq, self.waiting, is_waiting=True)
+                print(f"[Request Drop] Dropped waiting request {seq.seq_id} due to congestion")
+                continue
+                
             remaining = self.max_num_batched_tokens - num_batched_tokens
             if remaining == 0:
                 break
@@ -55,8 +77,16 @@ class Scheduler:
             return scheduled_seqs, True
 
         # decode
-        while self.running and len(scheduled_seqs) < self.max_num_seqs:
-            seq = self.running.popleft()
+        running_seqs_to_process = list(self.running)
+        while running_seqs_to_process and len(scheduled_seqs) < self.max_num_seqs:
+            seq = running_seqs_to_process.pop(0)
+            
+            # Check if we should drop this running request
+            if self.drop_enabled and self.congestion_detected and self._should_drop_request(seq):
+                self._drop_request(seq, self.running, is_waiting=False)
+                print(f"[Request Drop] Dropped running request {seq.seq_id} due to congestion")
+                continue
+                
             while not self.block_manager.can_append(seq):
                 if self.running:
                     self.preempt(self.running.pop())
@@ -68,8 +98,13 @@ class Scheduler:
                 seq.is_prefill = False
                 self.block_manager.may_append(seq)
                 scheduled_seqs.append(seq)
-        assert scheduled_seqs
-        self.running.extendleft(reversed(scheduled_seqs))
+        
+        if scheduled_seqs:
+            self.running.extendleft(reversed(scheduled_seqs))
+        else:
+            # If all requests were dropped, return empty list
+            return [], False
+            
         return scheduled_seqs, False
 
     def preempt(self, seq: Sequence):
@@ -78,6 +113,43 @@ class Scheduler:
         self.block_manager.deallocate(seq)
         self.waiting.appendleft(seq)
 
+    def _should_drop_request(self, seq: Sequence) -> bool:
+        """Determine if a request should be dropped based on drop probability"""
+        return random.random() < self.drop_probability
+    
+    def _drop_request(self, seq: Sequence, queue: deque, is_waiting: bool):
+        """Drop a request and clean up resources"""
+        seq.status = SequenceStatus.DROPPED
+        self.dropped_sequences.append(seq.seq_id)
+        
+        # Clean up resources
+        if seq.block_table:
+            self.block_manager.deallocate(seq)
+        
+        # Remove from appropriate queue
+        if is_waiting:
+            if seq in self.waiting:
+                self.waiting.remove(seq)
+        else:
+            if seq in self.running:
+                self.running.remove(seq)
+    
+    def enable_drop_mechanism(self, probability: float = 0.3):
+        """Enable the request drop mechanism"""
+        self.drop_enabled = True
+        self.drop_probability = probability
+        print(f"[Request Drop] Mechanism enabled with drop probability: {probability}")
+    
+    def disable_drop_mechanism(self):
+        """Disable the request drop mechanism"""
+        self.drop_enabled = False
+        self.congestion_detected = False
+        print(f"[Request Drop] Mechanism disabled")
+    
+    def get_dropped_sequences(self) -> list[int]:
+        """Get list of dropped sequence IDs"""
+        return self.dropped_sequences
+    
     def postprocess(self, seqs: list[Sequence], token_ids: list[int], is_prefill: bool):
         for seq, token_id in zip(seqs, token_ids):
             self.block_manager.hash_blocks(seq)

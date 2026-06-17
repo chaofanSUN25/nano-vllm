@@ -63,7 +63,7 @@ class BlockManager:
             token_ids = seq.block(i)
             h = self.compute_hash(token_ids, h)
             block_id = self.hash_to_block_id.get(h, -1)
-            if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
+            if block_id == -1 or self.blocks[block_id].token_ids != token_ids:  # hash对上仍有不同的token_ids的可能，需要双重校验
                 break
             num_cached_blocks += 1
             if block_id in self.used_block_ids:

@@ -56,6 +56,18 @@ class LLMEngine:
 
     def is_finished(self):
         return self.scheduler.is_finished()
+    
+    def enable_drop_mechanism(self, probability: float = 0.3):
+        """Enable the request drop mechanism"""
+        self.scheduler.enable_drop_mechanism(probability)
+    
+    def disable_drop_mechanism(self):
+        """Disable the request drop mechanism"""
+        self.scheduler.disable_drop_mechanism()
+    
+    def get_dropped_sequences(self) -> list[int]:
+        """Get list of dropped sequence IDs"""
+        return self.scheduler.get_dropped_sequences()
 
     def generate(
         self,
