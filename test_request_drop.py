@@ -20,10 +20,10 @@ def test_request_drop():
     print("="*60)
     
     # 模型路径
-    model_path = os.path.expanduser("~/huggingface/Qwen3-0.6B/")
+    model_path = os.path.expanduser("/usr/wkspace/Qwen3-0.6B")
     
     # 初始化 tokenizer 和 LLM
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
     llm = LLM(model_path, enforce_eager=True, tensor_parallel_size=1, max_num_seqs=4)
     
     # 启用 request drop 机制（50% 丢弃概率）
