@@ -47,7 +47,7 @@ class Scheduler:
             
             # Check if we should drop this request
             if self.drop_enabled and self.congestion_detected and self._should_drop_request(seq):
-                self._drop_request(seq, self.waiting, is_waiting=True)
+                self._drop_request(seq)
                 print(f"[Request Drop] Dropped waiting request {seq.seq_id} due to congestion")
                 continue
                 
@@ -77,13 +77,12 @@ class Scheduler:
             return scheduled_seqs, True
 
         # decode
-        running_seqs_to_process = list(self.running)
-        while running_seqs_to_process and len(scheduled_seqs) < self.max_num_seqs:
-            seq = running_seqs_to_process.pop(0)
+        while self.running and len(scheduled_seqs) < self.max_num_seqs:
+            seq = self.running.popleft()
             
             # Check if we should drop this running request
             if self.drop_enabled and self.congestion_detected and self._should_drop_request(seq):
-                self._drop_request(seq, self.running, is_waiting=False)
+                self._drop_request(seq)
                 print(f"[Request Drop] Dropped running request {seq.seq_id} due to congestion")
                 continue
                 
@@ -99,11 +98,8 @@ class Scheduler:
                 self.block_manager.may_append(seq)
                 scheduled_seqs.append(seq)
         
-        if scheduled_seqs:
-            self.running.extendleft(reversed(scheduled_seqs))
-        else:
-            # If all requests were dropped, return empty list
-            return [], False
+        # Add scheduled sequences back to running queue for next iteration
+        self.running.extend(scheduled_seqs)
             
         return scheduled_seqs, False
 
@@ -117,7 +113,7 @@ class Scheduler:
         """Determine if a request should be dropped based on drop probability"""
         return random.random() < self.drop_probability
     
-    def _drop_request(self, seq: Sequence, queue: deque, is_waiting: bool):
+    def _drop_request(self, seq: Sequence):
         """Drop a request and clean up resources"""
         seq.status = SequenceStatus.DROPPED
         self.dropped_sequences.append(seq.seq_id)
@@ -125,14 +121,6 @@ class Scheduler:
         # Clean up resources
         if seq.block_table:
             self.block_manager.deallocate(seq)
-        
-        # Remove from appropriate queue
-        if is_waiting:
-            if seq in self.waiting:
-                self.waiting.remove(seq)
-        else:
-            if seq in self.running:
-                self.running.remove(seq)
     
     def enable_drop_mechanism(self, probability: float = 0.3):
         """Enable the request drop mechanism"""
