@@ -179,6 +179,9 @@ class ModelRunner:
             input_ids.append(seq.last_token)
             positions.append(len(seq) - 1)
             context_lens.append(len(seq))
+            # Ensure block_table is populated before accessing it
+            if not seq.block_table:
+                raise RuntimeError(f"Sequence {seq.seq_id} has empty block_table during decode phase. This indicates prefill was not completed.")
             slot_mapping.append(seq.block_table[-1] * self.block_size + seq.last_block_num_tokens  - 1)
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
