@@ -212,8 +212,13 @@ class Scheduler:
     
     def _drop_request(self, seq: Sequence):
         """Drop a request and clean up resources"""
+        # 防止重复添加到dropped_sequences
+        if seq.status == SequenceStatus.DROPPED:
+            return
+        
         seq.status = SequenceStatus.DROPPED
         self.dropped_sequences.append(seq.seq_id)
+        self.dropped_count += 1
         
         # Clean up resources
         if seq.block_table:

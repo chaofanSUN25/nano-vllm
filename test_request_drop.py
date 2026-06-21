@@ -32,7 +32,7 @@ def test_request_drop():
     
     # 设置拥塞阈值
     llm.set_congestion_thresholds(
-        gpu_memory_threshold=0.80,
+        gpu_memory_threshold=0.85,
         queue_length_threshold=50,
         request_latency_threshold=3.0
     )
