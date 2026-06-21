@@ -111,3 +111,6 @@ def test_request_drop():
     print("\n" + "="*60)
     print("测试完成!")
     print("="*60)
+
+if __name__ == "__main__":
+    test_request_drop()
