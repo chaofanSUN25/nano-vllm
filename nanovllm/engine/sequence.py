@@ -1,6 +1,7 @@
 from copy import copy
 from enum import Enum, auto
 from itertools import count
+import time
 
 from nanovllm.sampling_params import SamplingParams
 
@@ -30,6 +31,9 @@ class Sequence:
         self.temperature = sampling_params.temperature
         self.max_tokens = sampling_params.max_tokens
         self.ignore_eos = sampling_params.ignore_eos
+        # 新增：用于智能丢弃策略
+        self.priority = sampling_params.priority
+        self.created_at = time.time()  # 创建时间，用于基于等待时间的丢弃
 
     def __len__(self):
         return self.num_tokens

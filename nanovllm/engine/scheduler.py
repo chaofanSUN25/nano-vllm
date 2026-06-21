@@ -1,5 +1,8 @@
 from collections import deque
 import random
+import time
+
+import torch
 
 from nanovllm.config import Config
 from nanovllm.engine.sequence import Sequence, SequenceStatus
@@ -19,27 +22,43 @@ class Scheduler:
         
         # Request drop mechanism
         self.drop_enabled = False
-        self.drop_probability = 0.3  # 30% chance to drop requests when congestion detected
+        self.drop_probability = 0.3  # Base drop probability
         self.congestion_detected = False
         self.dropped_sequences = []
         self.step_counter = 0
+        
+        # 拥塞阈值配置
+        self.gpu_memory_threshold = 0.9  # GPU内存使用率超过此值触发拥塞
+        self.queue_length_threshold = 100  # 队列长度超过此值触发拥塞
+        self.request_latency_threshold = 5.0  # 请求延迟超过此秒数触发拥塞
+        
+        # 丢弃策略配置
+        self.drop_strategy = "priority"  # priority, size, age, hybrid
+        
+        # 统计信息
+        self.request_start_times = {}  # seq_id -> start_time
+        self.total_requests = 0
+        self.dropped_count = 0
 
     def is_finished(self):
         return not self.waiting and not self.running
 
     def add(self, seq: Sequence):
         self.waiting.append(seq)
+        self.request_start_times[seq.seq_id] = time.time()
+        self.total_requests += 1
 
     def schedule(self) -> tuple[list[Sequence], bool]:
         scheduled_seqs = []
         num_batched_tokens = 0
         
-        # Simulate congestion detection for demo
-        self.step_counter += 1
-        if self.drop_enabled and self.step_counter > 3:  # After step 3, simulate congestion
-            self.congestion_detected = random.choice([True, False])
-            if self.congestion_detected:
-                print(f"[Congestion Detected] Step {self.step_counter}: System overloaded, considering request drops")
+        # 检测真实拥塞信号
+        self.detect_congestion()
+        
+        if self.congestion_detected:
+            print(f"[Congestion Detected] Step {self.step_counter}: System overloaded - "
+                  f"GPU={self.get_gpu_memory_usage():.1%}, Queue={len(self.waiting) + len(self.running)}, "
+                  f"Latency={self.get_average_latency():.2f}s")
 
         # prefill
         while self.waiting and len(scheduled_seqs) < self.max_num_seqs:
@@ -48,7 +67,8 @@ class Scheduler:
             # Check if we should drop this request
             if self.drop_enabled and self.congestion_detected and self._should_drop_request(seq):
                 self._drop_request(seq)
-                print(f"[Request Drop] Dropped waiting request {seq.seq_id} due to congestion")
+                print(f"[Request Drop] Dropped waiting request {seq.seq_id} (priority={seq.priority}, "
+                      f"tokens={seq.num_tokens}, age={self._get_request_age(seq):.1f}s)")
                 continue
                 
             remaining = self.max_num_batched_tokens - num_batched_tokens
@@ -83,7 +103,8 @@ class Scheduler:
             # Check if we should drop this running request
             if self.drop_enabled and self.congestion_detected and self._should_drop_request(seq):
                 self._drop_request(seq)
-                print(f"[Request Drop] Dropped running request {seq.seq_id} due to congestion")
+                print(f"[Request Drop] Dropped running request {seq.seq_id} (priority={seq.priority}, "
+                      f"tokens={seq.num_tokens}, age={self._get_request_age(seq):.1f}s)")
                 continue
                 
             while not self.block_manager.can_append(seq):
@@ -100,7 +121,7 @@ class Scheduler:
         
         # Add scheduled sequences back to running queue for next iteration
         self.running.extend(scheduled_seqs)
-            
+        
         return scheduled_seqs, False
 
     def preempt(self, seq: Sequence):
@@ -109,9 +130,85 @@ class Scheduler:
         self.block_manager.deallocate(seq)
         self.waiting.appendleft(seq)
 
+    def detect_congestion(self):
+        """检测真实拥塞信号"""
+        self.step_counter += 1
+        
+        if not self.drop_enabled:
+            self.congestion_detected = False
+            return
+        
+        # 检查GPU内存使用率
+        gpu_memory_usage = self.get_gpu_memory_usage()
+        
+        # 检查队列长度
+        queue_length = len(self.waiting) + len(self.running)
+        
+        # 检查平均请求延迟
+        avg_latency = self.get_average_latency()
+        
+        # 任何一个指标超过阈值即认为拥塞
+        self.congestion_detected = (
+            gpu_memory_usage > self.gpu_memory_threshold or
+            queue_length > self.queue_length_threshold or
+            avg_latency > self.request_latency_threshold
+        )
+    
+    def get_gpu_memory_usage(self):
+        """获取GPU内存使用率"""
+        try:
+            if torch.cuda.is_available():
+                free, total = torch.cuda.mem_get_info()
+                return (total - free) / total
+            return 0.0
+        except Exception:
+            return 0.0
+    
+    def get_average_latency(self):
+        """获取等待队列中请求的平均延迟"""
+        if not self.waiting:
+            return 0.0
+        current_time = time.time()
+        total_latency = sum(current_time - seq.created_at for seq in self.waiting)
+        return total_latency / len(self.waiting)
+    
+    def _get_request_age(self, seq: Sequence):
+        """获取请求的等待时间"""
+        return time.time() - seq.created_at
+    
     def _should_drop_request(self, seq: Sequence) -> bool:
-        """Determine if a request should be dropped based on drop probability"""
-        return random.random() < self.drop_probability
+        """基于智能策略决定是否丢弃请求"""
+        base_prob = self.drop_probability
+        
+        if self.drop_strategy == "priority":
+            # 优先级丢弃：低优先级请求更容易被丢弃
+            # priority=1: 概率翻倍, priority=5: 概率减半
+            priority_factor = (6 - seq.priority) / 3  # 1.67 to 0.33
+            adjusted_prob = base_prob * priority_factor
+            
+        elif self.drop_strategy == "size":
+            # 基于请求大小：大请求更容易被丢弃
+            size_factor = min(seq.num_tokens / 512, 2.0)  # 最多2倍
+            adjusted_prob = base_prob * size_factor
+            
+        elif self.drop_strategy == "age":
+            # 基于等待时间：新请求更容易被丢弃
+            age = self._get_request_age(seq)
+            age_factor = max(1.0 - age / 10.0, 0.1)  # 随时间递减
+            adjusted_prob = base_prob * age_factor
+            
+        elif self.drop_strategy == "hybrid":
+            # 混合策略：综合考虑优先级、大小和年龄
+            priority_factor = (6 - seq.priority) / 3
+            size_factor = min(seq.num_tokens / 512, 1.5)
+            age = self._get_request_age(seq)
+            age_factor = max(1.0 - age / 15.0, 0.2)
+            adjusted_prob = base_prob * priority_factor * size_factor * age_factor
+            
+        else:
+            adjusted_prob = base_prob
+        
+        return random.random() < adjusted_prob
     
     def _drop_request(self, seq: Sequence):
         """Drop a request and clean up resources"""
@@ -122,11 +219,27 @@ class Scheduler:
         if seq.block_table:
             self.block_manager.deallocate(seq)
     
-    def enable_drop_mechanism(self, probability: float = 0.3):
-        """Enable the request drop mechanism"""
+    def enable_drop_mechanism(self, probability: float = 0.3, strategy: str = "priority"):
+        """Enable the request drop mechanism with configurable strategy
+        
+        Args:
+            probability: Base drop probability (default: 0.3)
+            strategy: Drop strategy. Options: "priority", "size", "age", "hybrid"
+        """
         self.drop_enabled = True
         self.drop_probability = probability
-        print(f"[Request Drop] Mechanism enabled with drop probability: {probability}")
+        self.drop_strategy = strategy
+        print(f"[Request Drop] Mechanism enabled with probability: {probability}, strategy: {strategy}")
+    
+    def set_congestion_thresholds(self, gpu_memory_threshold: float = 0.9,
+                                   queue_length_threshold: int = 100,
+                                   request_latency_threshold: float = 5.0):
+        """设置拥塞检测阈值"""
+        self.gpu_memory_threshold = gpu_memory_threshold
+        self.queue_length_threshold = queue_length_threshold
+        self.request_latency_threshold = request_latency_threshold
+        print(f"[Request Drop] Thresholds updated: GPU={gpu_memory_threshold}, "
+              f"Queue={queue_length_threshold}, Latency={request_latency_threshold}s")
     
     def disable_drop_mechanism(self):
         """Disable the request drop mechanism"""

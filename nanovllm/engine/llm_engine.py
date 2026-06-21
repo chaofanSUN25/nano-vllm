@@ -59,9 +59,22 @@ class LLMEngine:
     def is_finished(self):
         return self.scheduler.is_finished()
     
-    def enable_drop_mechanism(self, probability: float = 0.3):
-        """Enable the request drop mechanism"""
-        self.scheduler.enable_drop_mechanism(probability)
+    def enable_drop_mechanism(self, probability: float = 0.3, strategy: str = "priority"):
+        """Enable the request drop mechanism
+        
+        Args:
+            probability: Base drop probability (default: 0.3)
+            strategy: Drop strategy. Options: "priority", "size", "age", "hybrid"
+        """
+        self.scheduler.enable_drop_mechanism(probability, strategy)
+    
+    def set_congestion_thresholds(self, gpu_memory_threshold: float = 0.9,
+                                   queue_length_threshold: int = 100,
+                                   request_latency_threshold: float = 5.0):
+        """Set congestion detection thresholds"""
+        self.scheduler.set_congestion_thresholds(gpu_memory_threshold,
+                                                  queue_length_threshold,
+                                                  request_latency_threshold)
     
     def disable_drop_mechanism(self):
         """Disable the request drop mechanism"""
