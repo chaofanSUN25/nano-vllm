@@ -3,7 +3,7 @@ import torch
 from typing import Callable
 
 
-@dataclass(slots=True)
+@dataclass
 class Context:
     is_prefill: bool = False
     cu_seqlens_q: torch.Tensor | None = None
@@ -15,7 +15,7 @@ class Context:
     block_tables: torch.Tensor | None = None
     drop_mask: torch.Tensor | None = None
     num_seqs: int = 0
-    layer_drop_callback = None
+    layer_drop_callback: Callable | None = None
 
 _CONTEXT = Context()
 
