@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import torch
+from typing import Callable
 
 
 @dataclass(slots=True)
