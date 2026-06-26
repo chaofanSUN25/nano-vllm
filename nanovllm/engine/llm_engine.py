@@ -80,6 +80,31 @@ class LLMEngine:
         """Disable the request drop mechanism"""
         self.scheduler.disable_drop_mechanism()
     
+    def set_pd_drop_multipliers(self, prefill_multiplier: float = 2.0, decode_multiplier: float = 0.3):
+        """Set drop probability multipliers for Prefill and Decode stages
+        
+        Args:
+            prefill_multiplier: Multiplier for prefill stage drop probability (>1 means more aggressive)
+            decode_multiplier: Multiplier for decode stage drop probability (<1 means more conservative)
+        """
+        self.scheduler.set_pd_drop_multipliers(prefill_multiplier, decode_multiplier)
+    
+    def enable_layer_drop(self, probability: float = 0.1):
+        """Enable layer-level request drop mechanism
+        
+        Args:
+            probability: Base drop probability per layer (default: 0.1)
+        """
+        self.scheduler.enable_layer_drop(probability)
+        # 传递配置给model_runner
+        if hasattr(self.model_runner, 'layer_drop_enabled'):
+            self.model_runner.layer_drop_enabled = True
+            self.model_runner.layer_drop_probability = probability
+        else:
+            # 如果没有属性，动态添加
+            setattr(self.model_runner, 'layer_drop_enabled', True)
+            setattr(self.model_runner, 'layer_drop_probability', probability)
+    
     def get_dropped_sequences(self) -> list[int]:
         """Get list of dropped sequence IDs"""
         return self.scheduler.get_dropped_sequences()

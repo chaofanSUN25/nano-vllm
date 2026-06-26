@@ -35,10 +35,15 @@ class Scheduler:
         # 丢弃策略配置
         self.drop_strategy = "priority"  # priority, size, age, hybrid
         
+        # Layer-level drop策略
+        self.layer_drop_enabled = False
+        self.layer_drop_probability = 0.1  # base drop probability per layer
+        
         # 统计信息
         self.request_start_times = {}  # seq_id -> start_time
         self.total_requests = 0
         self.dropped_count = 0
+        self.dropped_layer_count = 0  # layer-level drop统计
 
     def is_finished(self):
         return not self.waiting and not self.running
@@ -171,6 +176,21 @@ class Scheduler:
         current_time = time.time()
         total_latency = sum(current_time - seq.created_at for seq in self.waiting)
         return total_latency / len(self.waiting)
+    
+    def enable_layer_drop(self, probability: float = 0.1):
+        """Enable layer-level request drop mechanism
+        
+        Args:
+            probability: Base drop probability per layer (default: 0.1)
+        """
+        self.layer_drop_enabled = True
+        self.layer_drop_probability = probability
+        print(f"[Layer Drop] Mechanism enabled with probability: {probability}")
+    
+    def disable_layer_drop(self):
+        """Disable layer-level request drop mechanism"""
+        self.layer_drop_enabled = False
+        print("[Layer Drop] Mechanism disabled")
     
     def _get_request_age(self, seq: Sequence):
         """获取请求的等待时间"""

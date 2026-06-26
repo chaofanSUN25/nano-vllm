@@ -169,6 +169,7 @@ class Qwen3Model(nn.Module):
         self.embed_tokens = VocabParallelEmbedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([Qwen3DecoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.num_hidden_layers = config.num_hidden_layers
 
     def forward(
         self,
@@ -177,8 +178,27 @@ class Qwen3Model(nn.Module):
     ) -> torch.Tensor:
         hidden_states = self.embed_tokens(input_ids)
         residual = None
-        for layer in self.layers:
+        
+        # 获取上下文信息
+        context = get_context()
+        
+        for layer_idx, layer in enumerate(self.layers):
             hidden_states, residual = layer(positions, hidden_states, residual)
+            
+            # Layer-level drop检查（在每层之后进行）
+            if context.layer_drop_callback is not None and not context.is_prefill:
+                # 调用layer drop回调，检查是否需要drop某些请求
+                dropped_indices = context.layer_drop_callback(layer_idx, self.num_hidden_layers)
+                
+                if dropped_indices is not None and len(dropped_indices) > 0:
+                    # 标记被drop的sequence的hidden_states
+                    # 通过设置为0或特殊标记来实现soft drop
+                    if context.cu_seqlens_q is not None:
+                        for idx in dropped_indices:
+                            start = int(context.cu_seqlens_q[idx])
+                            end = int(context.cu_seqlens_q[idx + 1])
+                            hidden_states[start:end] = 0.0
+        
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
 

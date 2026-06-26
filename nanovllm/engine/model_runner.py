@@ -188,13 +188,66 @@ class ModelRunner:
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         context_lens = torch.tensor(context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         block_tables = self.prepare_block_tables(seqs)
-        set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables)
+        
+        # 设置layer-level drop回调
+        def layer_drop_callback(layer_idx, total_layers):
+            return self._layer_level_drop(layer_idx, total_layers, seqs)
+        
+        set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, 
+                    block_tables=block_tables, num_seqs=len(seqs), 
+                    layer_drop_callback=layer_drop_callback)
         return input_ids, positions
 
-    def prepare_sample(self, seqs: list[Sequence]):
-        temperatures = [seq.temperature for seq in seqs]
-        temperatures = torch.tensor(temperatures, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True)
-        return temperatures
+    def _layer_level_drop(self, layer_idx: int, total_layers: int, seqs: list[Sequence]) -> list[int]:
+        """Layer-level请求丢弃机制
+        
+        在每层之后检查是否需要丢弃某些请求，实现细粒度的资源管理。
+        
+        Args:
+            layer_idx: 当前layer索引（从0开始）
+            total_layers: 总layer数量
+            seqs: 当前batch中的sequence列表
+            
+        Returns:
+            需要被drop的sequence索引列表
+        """
+        if not hasattr(self, 'layer_drop_enabled') or not self.layer_drop_enabled:
+            return []
+        
+        dropped_indices = []
+        
+        for i, seq in enumerate(seqs):
+            # 检查是否已经被标记为drop
+            if seq.status == SequenceStatus.DROPPED:
+                dropped_indices.append(i)
+                continue
+            
+            # Layer-level drop策略：
+            # 1. 基于剩余层数计算优先级
+            # 2. 越接近输出层，越不应该被drop（已经投入了很多计算）
+            remaining_layers = total_layers - layer_idx - 1
+            progress = (layer_idx + 1) / total_layers  # 已经完成的layer比例
+            
+            # 计算drop概率：越早期layer，drop概率越高
+            # 在第0层（最开始），drop概率 = base_prob
+            # 在最后一层，drop概率 = base_prob * 0.1（几乎不drop）
+            drop_prob = self.layer_drop_probability * (1 - 0.9 * progress)
+            
+            # 考虑sequence优先级
+            priority_factor = (6 - seq.priority) / 3  # priority=1时为1.67, priority=5时为0.33
+            adjusted_prob = drop_prob * priority_factor
+            
+            # 考虑请求年龄（已经处理了多少token）
+            age_factor = min(seq.num_completion_tokens / 10, 1.0)  # 生成越多token，越不应该被drop
+            adjusted_prob *= (1 - age_factor * 0.5)
+            
+            if random.random() < adjusted_prob:
+                dropped_indices.append(i)
+                seq.status = SequenceStatus.DROPPED
+                print(f"[Layer Drop] Seq {seq.seq_id} dropped at layer {layer_idx}/{total_layers}, "
+                      f"progress={progress:.1%}, prob={adjusted_prob:.3f}")
+        
+        return dropped_indices
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
