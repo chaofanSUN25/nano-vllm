@@ -12,11 +12,9 @@ class Context:
     slot_mapping: torch.Tensor | None = None
     context_lens: torch.Tensor | None = None
     block_tables: torch.Tensor | None = None
-    
-    # Layer-level drop支持
-    drop_mask: torch.Tensor | None = None  # 标记哪些sequence需要被drop
-    num_seqs: int = 0  # batch中的sequence数量
-    layer_drop_callback = None  # layer间drop回调函数
+    drop_mask: torch.Tensor | None = None
+    num_seqs: int = 0
+    layer_drop_callback = None
 
 _CONTEXT = Context()
 
@@ -25,7 +23,19 @@ def get_context():
 
 def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0, max_seqlen_k=0, slot_mapping=None, context_lens=None, block_tables=None, drop_mask=None, num_seqs=0, layer_drop_callback=None):
     global _CONTEXT
-    _CONTEXT = Context(is_prefill, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, context_lens, block_tables, drop_mask, num_seqs, layer_drop_callback)
+    _CONTEXT = Context(
+        is_prefill=is_prefill,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_k,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        slot_mapping=slot_mapping,
+        context_lens=context_lens,
+        block_tables=block_tables,
+        drop_mask=drop_mask,
+        num_seqs=num_seqs,
+        layer_drop_callback=layer_drop_callback
+    )
 
 def reset_context():
     global _CONTEXT
