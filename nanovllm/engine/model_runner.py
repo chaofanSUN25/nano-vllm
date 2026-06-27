@@ -232,9 +232,9 @@ class ModelRunner:
 
     def prepare_sample(self, seqs: list[Sequence]):
         if not seqs:
-            return torch.tensor([], dtype=torch.float32)
+            return torch.tensor([], dtype=torch.float32, device="cuda")
         temperatures = [seq.temperature for seq in seqs]
-        return torch.tensor(temperatures, dtype=torch.float32)
+        return torch.tensor(temperatures, dtype=torch.float32, device="cuda")
 
     def _layer_level_drop(self, layer_idx: int, total_layers: int, seqs: list[Sequence]) -> list[int]:
         """Layer-level请求丢弃机制
