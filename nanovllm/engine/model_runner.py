@@ -231,6 +231,8 @@ class ModelRunner:
         return input_ids, positions
 
     def prepare_sample(self, seqs: list[Sequence]):
+        if not seqs:
+            return torch.tensor([], dtype=torch.float32)
         temperatures = [seq.temperature for seq in seqs]
         return torch.tensor(temperatures, dtype=torch.float32)
 
