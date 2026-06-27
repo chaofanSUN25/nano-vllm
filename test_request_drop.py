@@ -33,7 +33,7 @@ def test_request_drop():
     llm.enable_drop_mechanism(
         probability=0.3, 
         strategy="hybrid",
-        pd_separate_drop=True
+        # pd_separate_drop=True
     )
     
     print("\n[Layer-Level Drop 策略说明]")
