@@ -121,7 +121,16 @@ class LLMEngine:
         for prompt, sp in zip(prompts, sampling_params):
             self.add_request(prompt, sp)
         outputs = {}
+        prompt_map = {}  # Track prompts by seq_id
         prefill_throughput = decode_throughput = 0.
+        # Track seq_id -> prompt mapping
+        seq_counter = 0
+        for prompt, sp in zip(prompts, sampling_params):
+            seq = Sequence(self.tokenizer.encode(prompt) if isinstance(prompt, str) else prompt, sp)
+            prompt_map[seq.seq_id] = prompt
+            self.scheduler.add(seq)
+            seq_counter += 1
+        
         while not self.is_finished():
             t = perf_counter()
             output, num_tokens = self.step()
@@ -137,6 +146,18 @@ class LLMEngine:
                 outputs[seq_id] = token_ids
                 pbar.update(1)
         pbar.close()
-        outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]
-        outputs = [{"text": self.tokenizer.decode(token_ids), "token_ids": token_ids} for token_ids in outputs]
-        return outputs
+        
+        # Build output with prompts
+        result = []
+        for seq_id in sorted(outputs.keys()):
+            token_ids = outputs[seq_id]
+            prompt = prompt_map.get(seq_id, "")
+            # Decode prompt if it's token IDs
+            if isinstance(prompt, list):
+                prompt = self.tokenizer.decode(prompt)
+            result.append({
+                "prompt": prompt,
+                "text": self.tokenizer.decode(token_ids),
+                "token_ids": token_ids
+            })
+        return result
