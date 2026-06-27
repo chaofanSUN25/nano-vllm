@@ -23,7 +23,7 @@ def test_request_drop():
     
     # 初始化 tokenizer 和 LLM
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
-    llm = LLM(model_path, enforce_eager=True, tensor_parallel_size=4, max_num_seqs=32)
+    llm = LLM(model_path, enforce_eager=True, tensor_parallel_size=1, max_num_seqs=32)
     
     # 启用 Layer-Level Drop 机制
     print("\n[Step 1] 启用 Layer-Level 请求丢弃机制")
