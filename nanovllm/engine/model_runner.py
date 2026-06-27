@@ -1,5 +1,6 @@
 import pickle
 import torch
+import socket
 import torch.distributed as dist
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
@@ -23,7 +24,9 @@ class ModelRunner:
         self.rank = rank
         self.event = event
 
-        dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank)
+        # dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank)
+        port = self._get_available_port()
+        dist.init_process_group("nccl", f"tcp://localhost:{port}", world_size=self.world_size, rank=rank)
         torch.cuda.set_device(rank)
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype or torch.float32)
@@ -46,7 +49,36 @@ class ModelRunner:
                 dist.barrier()
                 self.shm = SharedMemory(name="nanovllm")
                 self.loop()
-
+    def _get_available_port(self):
+        """Find an available port for distributed communication.
+        
+        Uses the configured port if specified, otherwise tries to find an available port.
+        Start from 2333 and increment if port is occupied.
+        """
+        port = getattr(self.config, 'distributed_port', 2333)
+        
+        # Try the configured port first
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('localhost', port))
+                return port
+            except OSError:
+                # Port is occupied, try next ones
+                pass
+        
+        # Try to find an available port
+        for test_port in range(port + 1, port + 100):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(('localhost', test_port))
+                    print(f"Port {port} is in use, using available port {test_port}")
+                    return test_port
+                except OSError:
+                    continue
+        
+        # If still can't find, raise error
+        raise RuntimeError(f"Cannot find available port in range {port}-{port+99}")
+        
     def exit(self):
         if self.world_size > 1:
             self.shm.close()
