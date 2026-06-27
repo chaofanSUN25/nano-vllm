@@ -278,8 +278,12 @@ class Scheduler:
     
     def postprocess(self, seqs: list[Sequence], token_ids: list[int], is_prefill: bool):
         for seq, token_id in zip(seqs, token_ids):
-            # Skip dropped sequences
+            # Handle dropped sequences - remove them from running queue
             if seq.status == SequenceStatus.DROPPED:
+                self.block_manager.deallocate(seq)
+                if seq in self.running:
+                    self.running.remove(seq)
+                self.dropped_sequences.append(seq.seq_id)
                 continue
         
             self.block_manager.hash_blocks(seq)

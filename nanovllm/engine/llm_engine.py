@@ -56,9 +56,6 @@ class LLMEngine:
         result = self.model_runner.call("run", seqs, is_prefill)
         if isinstance(result, tuple):
             token_ids, dropped_seq_ids = result
-            # Handle layer-level dropped sequences
-            if dropped_seq_ids:
-                self.scheduler.drop_sequences(dropped_seq_ids)
         else:
             token_ids = result
             dropped_seq_ids = []
