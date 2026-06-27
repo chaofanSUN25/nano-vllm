@@ -16,7 +16,12 @@ class Context:
     drop_mask: torch.Tensor | None = None
     num_seqs: int = 0
     layer_drop_callback: Callable | None = None
-
+    dropped_indices: set = None  # Track indices of dropped sequences
+    
+    def __post_init__(self):
+        if self.dropped_indices is None:
+            self.dropped_indices = set()
+            
 _CONTEXT = Context()
 
 def get_context():
@@ -35,7 +40,8 @@ def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0
         block_tables=block_tables,
         drop_mask=drop_mask,
         num_seqs=num_seqs,
-        layer_drop_callback=layer_drop_callback
+        layer_drop_callback=layer_drop_callback,
+        dropped_indices=set()
     )
 
 def reset_context():

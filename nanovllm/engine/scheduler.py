@@ -278,6 +278,10 @@ class Scheduler:
     
     def postprocess(self, seqs: list[Sequence], token_ids: list[int], is_prefill: bool):
         for seq, token_id in zip(seqs, token_ids):
+            # Skip dropped sequences
+            if seq.status == SequenceStatus.DROPPED:
+                continue
+        
             self.block_manager.hash_blocks(seq)
             seq.num_cached_tokens += seq.num_scheduled_tokens
             seq.num_scheduled_tokens = 0
@@ -288,3 +292,19 @@ class Scheduler:
                 seq.status = SequenceStatus.FINISHED
                 self.block_manager.deallocate(seq)
                 self.running.remove(seq)
+        
+    def drop_sequences(self, seq_ids: list[int]):
+        """Drop sequences by their IDs (for layer-level drop)
+        
+        Args:
+            seq_ids: List of sequence IDs to drop
+        """
+        for seq_id in seq_ids:
+            # Find and drop the sequence
+            for seq in list(self.running):
+                if seq.seq_id == seq_id:
+                    seq.status = SequenceStatus.DROPPED
+                    self.block_manager.deallocate(seq)
+                    self.running.remove(seq)
+                    self.dropped_sequences.append(seq_id)
+                    break

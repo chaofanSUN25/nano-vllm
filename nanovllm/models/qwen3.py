@@ -183,7 +183,27 @@ class Qwen3Model(nn.Module):
         context = get_context()
         
         for layer_idx, layer in enumerate(self.layers):
-            hidden_states, residual = layer(positions, hidden_states, residual)
+            # 跳过已经被drop的序列（只对未drop的序列执行计算）
+            if not context.is_prefill and context.layer_drop_callback is not None:
+                # 如果有被drop的序列，构建mask
+                if context.dropped_indices:
+                    # 计算哪些序列还未被drop
+                    active_mask = torch.ones(context.num_seqs, dtype=torch.bool)
+                    for idx in context.dropped_indices:
+                        if idx < context.num_seqs:
+                            active_mask[idx] = False
+                    
+                    # 只对未被drop的序列执行计算
+                    if active_mask.any():
+                        # 这里简化处理：仍然执行全部计算，但在结果中保留被drop序列的状态
+                        hidden_states, residual = layer(positions, hidden_states, residual)
+                    else:
+                        # 所有序列都被drop了，跳过计算
+                        continue
+                else:
+                    hidden_states, residual = layer(positions, hidden_states, residual)
+            else:
+                hidden_states, residual = layer(positions, hidden_states, residual)
             
             # Layer-level drop检查（在每层之后进行）
             if context.layer_drop_callback is not None and not context.is_prefill:
@@ -191,6 +211,9 @@ class Qwen3Model(nn.Module):
                 dropped_indices = context.layer_drop_callback(layer_idx, self.num_hidden_layers)
                 
                 if dropped_indices is not None and len(dropped_indices) > 0:
+                    # 累积被drop的序列索引
+                    context.dropped_indices.update(dropped_indices)
+
                     # 标记被drop的sequence的hidden_states
                     # 通过设置为0或特殊标记来实现soft drop
                     if context.cu_seqlens_q is not None:

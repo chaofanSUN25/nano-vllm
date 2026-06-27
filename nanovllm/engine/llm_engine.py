@@ -51,8 +51,28 @@ class LLMEngine:
         if not seqs:
             return [], 0
         num_tokens = sum(seq.num_scheduled_tokens for seq in seqs) if is_prefill else -len(seqs)
-        token_ids = self.model_runner.call("run", seqs, is_prefill)
-        self.scheduler.postprocess(seqs, token_ids, is_prefill)
+        
+        # Call model_runner.run() which returns (token_ids, dropped_seq_ids)
+        result = self.model_runner.call("run", seqs, is_prefill)
+        if isinstance(result, tuple):
+            token_ids, dropped_seq_ids = result
+            # Handle layer-level dropped sequences
+            if dropped_seq_ids:
+                self.scheduler.drop_sequences(dropped_seq_ids)
+        else:
+            token_ids = result
+            dropped_seq_ids = []
+        
+        # Filter out dropped sequences before postprocessing
+        active_seqs = [seq for seq in seqs if seq.status != SequenceStatus.DROPPED]
+        active_token_ids = []
+        seq_idx = 0
+        for seq in seqs:
+            if seq.status != SequenceStatus.DROPPED:
+                active_token_ids.append(token_ids[seq_idx])
+            seq_idx += 1
+        
+        self.scheduler.postprocess(active_seqs, active_token_ids, is_prefill)
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
         return outputs, num_tokens
 
