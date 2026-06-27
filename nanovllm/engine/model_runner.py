@@ -78,7 +78,7 @@ class ModelRunner:
         
         # If still can't find, raise error
         raise RuntimeError(f"Cannot find available port in range {port}-{port+99}")
-        
+
     def exit(self):
         if self.world_size > 1:
             self.shm.close()
@@ -229,6 +229,10 @@ class ModelRunner:
                     block_tables=block_tables, num_seqs=len(seqs), 
                     layer_drop_callback=layer_drop_callback)
         return input_ids, positions
+
+    def prepare_sample(self, seqs: list[Sequence]):
+        temperatures = [seq.temperature for seq in seqs]
+        return torch.tensor(temperatures, dtype=torch.float32)
 
     def _layer_level_drop(self, layer_idx: int, total_layers: int, seqs: list[Sequence]) -> list[int]:
         """Layer-level请求丢弃机制
