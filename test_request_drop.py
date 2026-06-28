@@ -19,9 +19,6 @@ def test_request_drop():
     print("="*60)
     print("测试 Layer-Level 请求丢弃机制")
     print("="*60)
-
-    # 重置 Sequence.counter，确保每次测试 seq_id 从0开始
-    Sequence.counter = count(0)
     
     # 模型路径
     model_path = os.path.expanduser("/usr/wkspace/Qwen3-0.6B")
@@ -29,6 +26,9 @@ def test_request_drop():
     # 初始化 tokenizer 和 LLM
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
     llm = LLM(model_path, enforce_eager=True, tensor_parallel_size=1, max_num_seqs=32)
+
+    # 在 LLM 初始化完成后再重置 Sequence.counter（warmup 已消耗了一些 seq_id）
+    Sequence.counter = count(0)
     
     # 启用 Layer-Level Drop 机制
     print("\n[Step 1] 启用 Layer-Level 请求丢弃机制")
