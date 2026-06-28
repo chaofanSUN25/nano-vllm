@@ -61,13 +61,10 @@ class LLMEngine:
             dropped_seq_ids = []
         
         # Filter out dropped sequences before postprocessing
+        # Build active_token_ids by pairing with active_seqs (not original seqs order)
         active_seqs = [seq for seq in seqs if seq.status != SequenceStatus.DROPPED]
-        active_token_ids = []
-        seq_idx = 0
-        for seq in seqs:
-            if seq.status != SequenceStatus.DROPPED:
-                active_token_ids.append(token_ids[seq_idx])
-            seq_idx += 1
+        dropped_indices = [i for i, seq in enumerate(seqs) if seq.status == SequenceStatus.DROPPED]
+        active_token_ids = [tid for i, tid in enumerate(token_ids) if i not in dropped_indices]
         
         self.scheduler.postprocess(active_seqs, active_token_ids, is_prefill)
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
