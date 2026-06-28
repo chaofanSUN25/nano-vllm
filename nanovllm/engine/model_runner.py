@@ -247,10 +247,14 @@ class ModelRunner:
         return torch.tensor(temperatures, dtype=torch.float32, device="cuda")
 
     def _layer_level_drop(self, layer_idx: int, total_layers: int, seqs: list[Sequence]) -> list[int]:
-        """Layer-level请求丢弃机制
+        """Layer-level请求丢弃机制（基于排名的确定性Drop）
         
         在每层之后检查是否需要丢弃某些请求，实现细粒度的资源管理。
-        Prefill阶段使用更激进的策略（计算量大），Decode阶段更保守。
+        使用基于排名的确定性策略：计算每个序列的drop_score，排序后确定性地
+        drop排名最靠前的K个。这样可以保证：
+        1. 高优先级请求永远不会在低优先级请求之前被drop
+        2. drop数量是可预测的，没有"运气"因素
+        3. 早期层可以drop更多，晚期层drop更少
         
         Args:
             layer_idx: 当前layer索引（从0开始）
@@ -265,6 +269,10 @@ class ModelRunner:
         
         dropped_indices = []
         context = get_context()
+        progress = (layer_idx + 1) / total_layers  # 已经完成的layer比例
+        
+        # 第一步：收集所有活跃序列及其drop_score
+        active_seqs_info = []  # (drop_score, index, seq)
         
         for i, seq in enumerate(seqs):
             # 检查是否已经被标记为drop
@@ -272,70 +280,74 @@ class ModelRunner:
                 dropped_indices.append(i)
                 continue
             
-            # Layer-level drop策略：
-            # 1. 基于剩余层数计算优先级
-            # 2. 越接近输出层，越不应该被drop（已经投入了很多计算）
-            progress = (layer_idx + 1) / total_layers  # 已经完成的layer比例
-            
-            # Prefill阶段使用更激进的drop策略
-            if context.is_prefill:
-                # Prefill计算量大，早期层drop概率更高
-                # 第0层：drop概率 = base_prob * 2.0
-                # 最后一层：drop概率 = base_prob * 0.3
-                drop_prob = self.layer_drop_probability * (2.0 - 1.7 * progress)
-                
-                # 优化：考虑prompt长度，但不对短prompt过度惩罚
-                # 使用指数函数，让短prompt也有合理的drop概率
-                # prompt=32 tokens → 0.37, prompt=256 → 0.78, prompt=512+ → 1.0
-                if seq.num_prompt_tokens <= 32:
-                    prompt_factor = 0.4  # 最短prompt也有40%的基础概率
-                elif seq.num_prompt_tokens <= 128:
-                    prompt_factor = 0.6  # 短prompt
-                elif seq.num_prompt_tokens <= 256:
-                    prompt_factor = 0.8  # 中等prompt
-                elif seq.num_prompt_tokens <= 512:
-                    prompt_factor = 1.0  # 标准prompt
-                else:
-                    prompt_factor = min(seq.num_prompt_tokens / 512, 2.0)  # 超长prompt额外惩罚
-                drop_prob *= prompt_factor
-            else:
-                # Decode阶段更保守
-                # 第0层：drop概率 = base_prob
-                # 最后一层：drop概率 = base_prob * 0.1
-                drop_prob = self.layer_drop_probability * (1 - 0.9 * progress)
-            
-            # 考虑sequence优先级
+            # 计算 drop_score（越高表示越应该被drop）
+            # 基于优先级和prompt长度
             priority_factor = (6 - seq.priority) / 3  # priority=1时为1.67, priority=5时为0.33
-            adjusted_prob = drop_prob * priority_factor
             
-            # Prefill阶段不考虑age_factor（还没有生成token）
-            # Decode阶段考虑请求年龄
-            if not context.is_prefill:
-                age_factor = min(seq.num_completion_tokens / 10, 1.0)
-                adjusted_prob *= (1 - age_factor * 0.5)
+            # Prompt长度因子
+            if seq.num_prompt_tokens <= 32:
+                prompt_factor = 0.4
+            elif seq.num_prompt_tokens <= 128:
+                prompt_factor = 0.6
+            elif seq.num_prompt_tokens <= 256:
+                prompt_factor = 0.8
+            elif seq.num_prompt_tokens <= 512:
+                prompt_factor = 1.0
+            else:
+                prompt_factor = min(seq.num_prompt_tokens / 512, 2.0)
             
-            # 调试日志：打印每一层的drop概率计算
-            if self.layer_drop_probability >= 0.05:  # 概率较高时打印详细日志
+            # drop_score = 优先级因子 × prompt长度因子
+            # 高优先级(priority=5) → priority_factor=0.33 → drop_score低
+            # 低优先级(priority=1) → priority_factor=1.67 → drop_score高
+            # 长prompt → prompt_factor大 → drop_score高
+            drop_score = priority_factor * prompt_factor
+            
+            active_seqs_info.append((drop_score, i, seq))
+            
+            # 调试日志：打印每一层的drop_score计算
+            if self.layer_drop_probability >= 0.05:
                 phase = "Prefill" if context.is_prefill else "Decode"
                 print(f"[Layer Drop Debug] Seq {seq.seq_id} layer {layer_idx}/{total_layers} ({phase}): "
-                      f"base={self.layer_drop_probability:.3f}, adjusted={adjusted_prob:.3f}, "
-                      f"priority={seq.priority}, prompt={seq.num_prompt_tokens}t")
+                      f"score={drop_score:.3f}, priority={seq.priority}, prompt={seq.num_prompt_tokens}t")
+        
+        # 第二步：计算本层应该drop的数量K
+        num_active = len(active_seqs_info)
+        if num_active == 0:
+            return dropped_indices
+        
+        # Prefill阶段：早期层drop更多，晚期层drop更少
+        # 第0层：drop_rate = base_prob * 2.0
+        # 最后一层：drop_rate = base_prob * 0.3
+        if context.is_prefill:
+            drop_rate = self.layer_drop_probability * (2.0 - 1.7 * progress)
+        else:
+            drop_rate = self.layer_drop_probability * (1 - 0.9 * progress)
+        
+        # 计算应该drop的数量（至少1个，最多num_active-1个，保证至少留1个）
+        K = max(0, min(num_active - 1, round(drop_rate * num_active)))
+        
+        # 第三步：按drop_score降序排序，drop前K个
+        # 排序规则：drop_score越高越优先被drop
+        # 如果score相同，priority低的优先，prompt长的优先
+        active_seqs_info.sort(key=lambda x: (-x[0], x[2].priority, -x[2].num_prompt_tokens))
+        
+        # 第四步：确定性地drop前K个
+        phase = "Prefill" if context.is_prefill else "Decode"
+        for j in range(K):
+            drop_score, i, seq = active_seqs_info[j]
+            dropped_indices.append(i)
+            seq.status = SequenceStatus.DROPPED
             
-            if random.random() < adjusted_prob:
-                dropped_indices.append(i)
-                seq.status = SequenceStatus.DROPPED
-                phase = "Prefill" if context.is_prefill else "Decode"
-                
-                # 记录 drop 详细信息到 Sequence 对象
-                seq.drop_layer = layer_idx
-                seq.drop_total_layers = total_layers
-                seq.drop_progress = progress
-                seq.drop_probability = adjusted_prob
-                seq.drop_phase = phase
-                
-                print(f"[Layer Drop] Seq {seq.seq_id} dropped at layer {layer_idx}/{total_layers} ({phase}), "
-                      f"progress={progress:.1%}, prob={adjusted_prob:.3f}, "
-                      f"priority={seq.priority}, prompt={seq.num_prompt_tokens}t")
+            # 记录 drop 详细信息到 Sequence 对象
+            seq.drop_layer = layer_idx
+            seq.drop_total_layers = total_layers
+            seq.drop_progress = progress
+            seq.drop_probability = drop_rate  # 使用层级drop_rate
+            seq.drop_phase = phase
+            
+            print(f"[Layer Drop] Seq {seq.seq_id} dropped at layer {layer_idx}/{total_layers} ({phase}), "
+                  f"progress={progress:.1%}, score={drop_score:.3f}, "
+                  f"priority={seq.priority}, prompt={seq.num_prompt_tokens}t")
         
         return dropped_indices
 
