@@ -19,6 +19,9 @@ class Sequence:
 
     def __init__(self, token_ids: list[int], sampling_params = SamplingParams()):
         self.seq_id = next(Sequence.counter)
+        import traceback
+        print(f"[DEBUG] Created Sequence: seq_id={self.seq_id}, num_tokens={len(token_ids)}")
+        traceback.print_stack(limit=10)
         self.status = SequenceStatus.WAITING
         self.token_ids = copy(token_ids)
         self.last_token = token_ids[-1]
