@@ -36,6 +36,11 @@ class ModelRunner:
         self.model = Qwen3ForCausalLM(hf_config)
         load_model(self.model, config.model)
         self.sampler = Sampler()
+        
+        # Layer-level drop mechanism (can be enabled by enable_layer_drop)
+        self.layer_drop_enabled = False
+        self.layer_drop_probability = 0.1
+        
         self.warmup_model()
         self.allocate_kv_cache()
         if not self.enforce_eager:
@@ -201,7 +206,13 @@ class ModelRunner:
         cu_seqlens_q = torch.tensor(cu_seqlens_q, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         cu_seqlens_k = torch.tensor(cu_seqlens_k, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
-        set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, None, block_tables)
+        
+        # 设置layer-level drop回调（prefill阶段也支持）
+        def layer_drop_callback(layer_idx, total_layers):
+            return self._layer_level_drop(layer_idx, total_layers, seqs)
+        
+        set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, None, block_tables,
+                    num_seqs=len(seqs), layer_drop_callback=layer_drop_callback)
         return input_ids, positions
 
     def prepare_decode(self, seqs: list[Sequence]):
@@ -242,6 +253,7 @@ class ModelRunner:
         """Layer-level请求丢弃机制
         
         在每层之后检查是否需要丢弃某些请求，实现细粒度的资源管理。
+        Prefill阶段使用更激进的策略（计算量大），Decode阶段更保守。
         
         Args:
             layer_idx: 当前layer索引（从0开始）
@@ -255,6 +267,7 @@ class ModelRunner:
             return []
         
         dropped_indices = []
+        context = get_context()
         
         for i, seq in enumerate(seqs):
             # 检查是否已经被标记为drop
@@ -265,13 +278,23 @@ class ModelRunner:
             # Layer-level drop策略：
             # 1. 基于剩余层数计算优先级
             # 2. 越接近输出层，越不应该被drop（已经投入了很多计算）
-            remaining_layers = total_layers - layer_idx - 1
             progress = (layer_idx + 1) / total_layers  # 已经完成的layer比例
             
-            # 计算drop概率：越早期layer，drop概率越高
-            # 在第0层（最开始），drop概率 = base_prob
-            # 在最后一层，drop概率 = base_prob * 0.1（几乎不drop）
-            drop_prob = self.layer_drop_probability * (1 - 0.9 * progress)
+            # Prefill阶段使用更激进的drop策略
+            if context.is_prefill:
+                # Prefill计算量大，早期层drop概率更高
+                # 第0层：drop概率 = base_prob * 1.5
+                # 最后一层：drop概率 = base_prob * 0.2
+                drop_prob = self.layer_drop_probability * (1.5 - 1.3 * progress)
+                
+                # 考虑prompt长度，长prompt更容易被drop
+                prompt_factor = min(seq.num_prompt_tokens / 512, 2.0)
+                drop_prob *= prompt_factor
+            else:
+                # Decode阶段更保守
+                # 第0层：drop概率 = base_prob
+                # 最后一层：drop概率 = base_prob * 0.1
+                drop_prob = self.layer_drop_probability * (1 - 0.9 * progress)
             
             # 考虑sequence优先级
             priority_factor = (6 - seq.priority) / 3  # priority=1时为1.67, priority=5时为0.33
@@ -281,11 +304,18 @@ class ModelRunner:
             age_factor = min(seq.num_completion_tokens / 10, 1.0)  # 生成越多token，越不应该被drop
             adjusted_prob *= (1 - age_factor * 0.5)
             
+            # Prefill阶段考虑scheduled tokens
+            if context.is_prefill:
+                scheduled_factor = min(seq.num_scheduled_tokens / 256, 1.5)
+                adjusted_prob *= scheduled_factor
+            
             if random.random() < adjusted_prob:
                 dropped_indices.append(i)
                 seq.status = SequenceStatus.DROPPED
-                print(f"[Layer Drop] Seq {seq.seq_id} dropped at layer {layer_idx}/{total_layers}, "
-                      f"progress={progress:.1%}, prob={adjusted_prob:.3f}")
+                phase = "Prefill" if context.is_prefill else "Decode"
+                print(f"[Layer Drop] Seq {seq.seq_id} dropped at layer {layer_idx}/{total_layers} ({phase}), "
+                      f"progress={progress:.1%}, prob={adjusted_prob:.3f}, "
+                      f"prompt_tokens={seq.num_prompt_tokens if context.is_prefill else 0}")
         
         return dropped_indices
 

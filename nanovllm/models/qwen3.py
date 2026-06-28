@@ -183,30 +183,9 @@ class Qwen3Model(nn.Module):
         context = get_context()
         
         for layer_idx, layer in enumerate(self.layers):
-            # 跳过已经被drop的序列（只对未drop的序列执行计算）
-            if not context.is_prefill and context.layer_drop_callback is not None:
-                # 如果有被drop的序列，构建mask
-                if context.dropped_indices:
-                    # 计算哪些序列还未被drop
-                    active_mask = torch.ones(context.num_seqs, dtype=torch.bool)
-                    for idx in context.dropped_indices:
-                        if idx < context.num_seqs:
-                            active_mask[idx] = False
-                    
-                    # 只对未被drop的序列执行计算
-                    if active_mask.any():
-                        # 这里简化处理：仍然执行全部计算，但在结果中保留被drop序列的状态
-                        hidden_states, residual = layer(positions, hidden_states, residual)
-                    else:
-                        # 所有序列都被drop了，跳过计算
-                        continue
-                else:
-                    hidden_states, residual = layer(positions, hidden_states, residual)
-            else:
-                hidden_states, residual = layer(positions, hidden_states, residual)
-            
-            # Layer-level drop检查（在每层之后进行）
-            if context.layer_drop_callback is not None and not context.is_prefill:
+            # Layer-level drop检查（在prefill和decode阶段都支持）
+            # 在每层之前检查是否需要drop某些请求
+            if context.layer_drop_callback is not None:
                 # 调用layer drop回调，检查是否需要drop某些请求
                 dropped_indices = context.layer_drop_callback(layer_idx, self.num_hidden_layers)
                 
@@ -221,6 +200,25 @@ class Qwen3Model(nn.Module):
                             start = int(context.cu_seqlens_q[idx])
                             end = int(context.cu_seqlens_q[idx + 1])
                             hidden_states[start:end] = 0.0
+            
+            # 跳过已经被drop的序列（只对未drop的序列执行计算）
+            if context.layer_drop_callback is not None and context.dropped_indices:
+                # 如果有被drop的序列，构建mask
+                # 计算哪些序列还未被drop
+                active_mask = torch.ones(context.num_seqs, dtype=torch.bool)
+                for idx in context.dropped_indices:
+                    if idx < context.num_seqs:
+                        active_mask[idx] = False
+                
+                # 只对未被drop的序列执行计算
+                if active_mask.any():
+                    # 这里简化处理：仍然执行全部计算，但在结果中保留被drop序列的状态
+                    hidden_states, residual = layer(positions, hidden_states, residual)
+                else:
+                    # 所有序列都被drop了，跳过计算
+                    continue
+            else:
+                hidden_states, residual = layer(positions, hidden_states, residual)
         
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
