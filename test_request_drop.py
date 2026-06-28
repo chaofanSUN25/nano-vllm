@@ -10,6 +10,8 @@
 """
 import os
 from nanovllm import LLM, SamplingParams
+from itertools import count
+from nanovllm.engine.sequence import Sequence
 from transformers import AutoTokenizer
 
 
@@ -17,6 +19,9 @@ def test_request_drop():
     print("="*60)
     print("测试 Layer-Level 请求丢弃机制")
     print("="*60)
+
+    # 重置 Sequence.counter，确保每次测试 seq_id 从0开始
+    Sequence.counter = count(0)
     
     # 模型路径
     model_path = os.path.expanduser("/usr/wkspace/Qwen3-0.6B")
