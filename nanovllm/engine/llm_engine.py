@@ -35,10 +35,17 @@ class LLMEngine:
         atexit.register(self.exit)
 
     def exit(self):
-        self.model_runner.call("exit")
-        del self.model_runner
+        if hasattr(self, 'model_runner'):
+            self.model_runner.call("exit")
+            del self.model_runner
         for p in self.ps:
             p.join()
+            # 清理GPU缓存，确保下一个LLM实例可以正常初始化
+        import torch
+        import torch.distributed as dist
+        torch.cuda.empty_cache()
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
     def add_request(self, prompt: str | list[int], sampling_params: SamplingParams, prompt_map: dict = None):
         original_prompt = prompt  # 保存原始 prompt
