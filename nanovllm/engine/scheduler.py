@@ -105,18 +105,13 @@ class Scheduler:
         while self.running and len(scheduled_seqs) < self.max_num_seqs:
             seq = self.running.popleft()
             
-            # Skip already dropped sequences
+            # Skip already dropped sequences (prefill阶段被drop的)
             if seq.status == SequenceStatus.DROPPED:
                 self.dropped_sequences.add(seq.seq_id)  # Use add() for set
                 self.block_manager.deallocate(seq)
                 continue
-            # Check if we should drop this running request
-            if self.drop_enabled and self.congestion_detected and self._should_drop_request(seq):
-                self._drop_request(seq)
-                print(f"[Request Drop] Dropped running request {seq.seq_id} (priority={seq.priority}, "
-                      f"tokens={seq.num_tokens}, age={self._get_request_age(seq):.1f}s)")
-                continue
-                
+            # Decode阶段不执行request drop，只在prefill阶段执行
+            
             while not self.block_manager.can_append(seq):
                 if self.running:
                     self.preempt(self.running.pop())

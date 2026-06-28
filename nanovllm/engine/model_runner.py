@@ -234,13 +234,10 @@ class ModelRunner:
         context_lens = torch.tensor(context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         block_tables = self.prepare_block_tables(seqs)
         
-        # 设置layer-level drop回调
-        def layer_drop_callback(layer_idx, total_layers):
-            return self._layer_level_drop(layer_idx, total_layers, seqs)
-        
+        # 不设置 layer_drop_callback，关闭 decode 阶段的 drop 机制
+        # Drop 只在 prefill 阶段生效
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, 
-                    block_tables=block_tables, num_seqs=len(seqs), 
-                    layer_drop_callback=layer_drop_callback)
+                    block_tables=block_tables, num_seqs=len(seqs))
         return input_ids, positions
 
     def prepare_sample(self, seqs: list[Sequence]):
