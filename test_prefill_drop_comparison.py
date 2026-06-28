@@ -72,6 +72,9 @@ def test_without_prefill_drop():
     print(f"  丢弃请求数: {dropped_count}")
     print(f"  总耗时: {elapsed:.2f} 秒")
     print(f"  平均每请求: {elapsed/len(prompts):.2f} 秒")
+
+     # 清理资源
+    llm.exit()
     
     return len(outputs), dropped_count, elapsed
 
@@ -114,7 +117,7 @@ def test_with_prefill_drop():
     
     elapsed = end_time - start_time
     dropped_count = len(llm.scheduler.dropped_sequences)
-    dropped_layer_count = llm.scheduler.dropped_layer_count
+    dropped_layer_count = getattr(llm.scheduler, 'dropped_layer_count', 0)
     
     print(f"\n结果统计:")
     print(f"  完成请求数: {len(outputs)}")
@@ -127,9 +130,13 @@ def test_with_prefill_drop():
     if dropped_count > 0:
         print(f"\n  被丢弃的请求分析:")
         for seq_id in sorted(llm.scheduler.dropped_sequences):
-            prompt = prompts[seq_id]
-            prompt_tokens = len(tokenizer.encode(prompt))
-            print(f"    Seq {seq_id}: prompt长度={prompt_tokens} tokens, {prompt[:50]}...")
+            if seq_id < len(prompts):
+                prompt = prompts[seq_id]
+                prompt_tokens = len(tokenizer.encode(prompt))
+                print(f"    Seq {seq_id}: prompt长度={prompt_tokens} tokens, {prompt[:50]}...")
+    
+    # 清理资源
+    llm.exit()
     
     return len(outputs), dropped_count, elapsed
 
