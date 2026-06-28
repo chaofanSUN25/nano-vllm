@@ -105,6 +105,11 @@ class Scheduler:
         while self.running and len(scheduled_seqs) < self.max_num_seqs:
             seq = self.running.popleft()
             
+            # Skip already dropped sequences
+            if seq.status == SequenceStatus.DROPPED:
+                self.dropped_sequences.append(seq.seq_id)
+                self.block_manager.deallocate(seq)
+                continue
             # Check if we should drop this running request
             if self.drop_enabled and self.congestion_detected and self._should_drop_request(seq):
                 self._drop_request(seq)
