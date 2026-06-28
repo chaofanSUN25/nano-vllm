@@ -70,12 +70,13 @@ class Scheduler:
         while self.waiting and len(scheduled_seqs) < self.max_num_seqs:
             seq = self.waiting[0]
             
-            # Check if we should drop this request
-            if self.drop_enabled and self.congestion_detected and self._should_drop_request(seq):
-                self._drop_request(seq)
-                print(f"[Request Drop] Dropped waiting request {seq.seq_id} (priority={seq.priority}, "
-                      f"tokens={seq.num_tokens}, age={self._get_request_age(seq):.1f}s)")
-                continue
+            # 禁用传统 request drop 机制
+            # 只保留 prefill 阶段的 layer-level drop
+            # if self.drop_enabled and self.congestion_detected and self._should_drop_request(seq):
+            #     self._drop_request(seq)
+            #     print(f"[Request Drop] Dropped waiting request {seq.seq_id} (priority={seq.priority}, "
+            #           f"tokens={seq.num_tokens}, age={self._get_request_age(seq):.1f}s)")
+            #     continue
                 
             remaining = self.max_num_batched_tokens - num_batched_tokens
             if remaining == 0:

@@ -30,16 +30,15 @@ def test_request_drop():
     # 在 LLM 初始化完成后再重置 Sequence.counter（warmup 已消耗了一些 seq_id）
     Sequence.counter = count(0)
     
-    # 启用 Layer-Level Drop 机制
-    print("\n[Step 1] 启用 Layer-Level 请求丢弃机制")
-    llm.enable_layer_drop(probability=0.01)  # 每层5%的基础drop概率
+    # 启用 Layer-Level Drop 机制（仅在 prefill 阶段生效）
+    print("\n[Step 1] 启用 Prefill Layer-Level 请求丢弃机制")
+    llm.enable_layer_drop(probability=0.15)  # 提高概率以便观察效果
     
-    # 同时启用传统的request drop机制
-    llm.enable_drop_mechanism(
-        probability=0.3, 
-        strategy="hybrid",
-        # pd_separate_drop=True
-    )
+    # 禁用传统的 request drop 机制（只保留 prefill layer drop）
+    # llm.enable_drop_mechanism(
+    #     probability=0.3, 
+    #     strategy="hybrid",
+    # )
     
     print("\n[Layer-Level Drop 策略说明]")
     print("  ├─ 在每个Decoder Layer之后进行drop决策")
