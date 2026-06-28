@@ -280,12 +280,23 @@ class ModelRunner:
             # Prefill阶段使用更激进的drop策略
             if context.is_prefill:
                 # Prefill计算量大，早期层drop概率更高
-                # 第0层：drop概率 = base_prob * 1.5
-                # 最后一层：drop概率 = base_prob * 0.2
-                drop_prob = self.layer_drop_probability * (1.5 - 1.3 * progress)
+                # 第0层：drop概率 = base_prob * 2.0
+                # 最后一层：drop概率 = base_prob * 0.3
+                drop_prob = self.layer_drop_probability * (2.0 - 1.7 * progress)
                 
-                # 考虑prompt长度，长prompt更容易被drop
-                prompt_factor = min(seq.num_prompt_tokens / 512, 2.0)
+                # 优化：考虑prompt长度，但不对短prompt过度惩罚
+                # 使用指数函数，让短prompt也有合理的drop概率
+                # prompt=32 tokens → 0.37, prompt=256 → 0.78, prompt=512+ → 1.0
+                if seq.num_prompt_tokens <= 32:
+                    prompt_factor = 0.4  # 最短prompt也有40%的基础概率
+                elif seq.num_prompt_tokens <= 128:
+                    prompt_factor = 0.6  # 短prompt
+                elif seq.num_prompt_tokens <= 256:
+                    prompt_factor = 0.8  # 中等prompt
+                elif seq.num_prompt_tokens <= 512:
+                    prompt_factor = 1.0  # 标准prompt
+                else:
+                    prompt_factor = min(seq.num_prompt_tokens / 512, 2.0)  # 超长prompt额外惩罚
                 drop_prob *= prompt_factor
             else:
                 # Decode阶段更保守
@@ -297,14 +308,18 @@ class ModelRunner:
             priority_factor = (6 - seq.priority) / 3  # priority=1时为1.67, priority=5时为0.33
             adjusted_prob = drop_prob * priority_factor
             
-            # 考虑请求年龄（已经处理了多少token）
-            age_factor = min(seq.num_completion_tokens / 10, 1.0)  # 生成越多token，越不应该被drop
-            adjusted_prob *= (1 - age_factor * 0.5)
+            # Prefill阶段不考虑age_factor（还没有生成token）
+            # Decode阶段考虑请求年龄
+            if not context.is_prefill:
+                age_factor = min(seq.num_completion_tokens / 10, 1.0)
+                adjusted_prob *= (1 - age_factor * 0.5)
             
-            # Prefill阶段考虑scheduled tokens
-            if context.is_prefill:
-                scheduled_factor = min(seq.num_scheduled_tokens / 256, 1.5)
-                adjusted_prob *= scheduled_factor
+            # 调试日志：打印每一层的drop概率计算
+            if self.layer_drop_probability >= 0.05:  # 概率较高时打印详细日志
+                phase = "Prefill" if context.is_prefill else "Decode"
+                print(f"[Layer Drop Debug] Seq {seq.seq_id} layer {layer_idx}/{total_layers} ({phase}): "
+                      f"base={self.layer_drop_probability:.3f}, adjusted={adjusted_prob:.3f}, "
+                      f"priority={seq.priority}, prompt={seq.num_prompt_tokens}t")
             
             if random.random() < adjusted_prob:
                 dropped_indices.append(i)
@@ -312,7 +327,7 @@ class ModelRunner:
                 phase = "Prefill" if context.is_prefill else "Decode"
                 print(f"[Layer Drop] Seq {seq.seq_id} dropped at layer {layer_idx}/{total_layers} ({phase}), "
                       f"progress={progress:.1%}, prob={adjusted_prob:.3f}, "
-                      f"prompt_tokens={seq.num_prompt_tokens if context.is_prefill else 0}")
+                      f"priority={seq.priority}, prompt={seq.num_prompt_tokens}t")
         
         return dropped_indices
 
