@@ -73,8 +73,15 @@ class LLMEngine:
         # Filter out dropped sequences before postprocessing
         # Build active_token_ids by pairing with active_seqs (not original seqs order)
         active_seqs = [seq for seq in seqs if seq.status != SequenceStatus.DROPPED]
+        dropped_seqs = [seq for seq in seqs if seq.status == SequenceStatus.DROPPED]
         dropped_indices = [i for i, seq in enumerate(seqs) if seq.status == SequenceStatus.DROPPED]
         active_token_ids = [tid for i, tid in enumerate(token_ids) if i not in dropped_indices]
+        
+        # 将 layer-level drop 的序列添加到 scheduler 的 tracking 集合中
+        for seq in dropped_seqs:
+            if seq.seq_id not in self.scheduler.dropped_sequences:
+                self.scheduler.dropped_sequences.add(seq.seq_id)
+                self.scheduler.dropped_sequence_objects[seq.seq_id] = seq
         
         self.scheduler.postprocess(active_seqs, active_token_ids, is_prefill)
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
