@@ -27,7 +27,7 @@ def test_request_drop():
     
     # 启用 Layer-Level Drop 机制
     print("\n[Step 1] 启用 Layer-Level 请求丢弃机制")
-    llm.enable_layer_drop(probability=0.05)  # 每层5%的基础drop概率
+    llm.enable_layer_drop(probability=0.01)  # 每层5%的基础drop概率
     
     # 同时启用传统的request drop机制
     llm.enable_drop_mechanism(
