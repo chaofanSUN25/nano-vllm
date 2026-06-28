@@ -24,7 +24,7 @@ class Scheduler:
         self.drop_enabled = False
         self.drop_probability = 0.3  # Base drop probability
         self.congestion_detected = False
-        self.dropped_sequences = []
+        self.dropped_sequences = set()  # Use set to avoid duplicate seq_ids
         self.step_counter = 0
         
         # 拥塞阈值配置
@@ -107,7 +107,7 @@ class Scheduler:
             
             # Skip already dropped sequences
             if seq.status == SequenceStatus.DROPPED:
-                self.dropped_sequences.append(seq.seq_id)
+                self.dropped_sequences.add(seq.seq_id)  # Use add() for set
                 self.block_manager.deallocate(seq)
                 continue
             # Check if we should drop this running request
@@ -242,7 +242,7 @@ class Scheduler:
             return
         
         seq.status = SequenceStatus.DROPPED
-        self.dropped_sequences.append(seq.seq_id)
+        self.dropped_sequences.add(seq.seq_id)
         self.dropped_count += 1
         
         # Clean up resources
@@ -288,7 +288,7 @@ class Scheduler:
                 self.block_manager.deallocate(seq)
                 if seq in self.running:
                     self.running.remove(seq)
-                self.dropped_sequences.append(seq.seq_id)
+                self.dropped_sequences.add(seq.seq_id)  # Use add() for set
                 continue
         
             self.block_manager.hash_blocks(seq)
@@ -315,5 +315,5 @@ class Scheduler:
                     seq.status = SequenceStatus.DROPPED
                     self.block_manager.deallocate(seq)
                     self.running.remove(seq)
-                    self.dropped_sequences.append(seq_id)
+                    self.dropped_sequences.add(seq_id)
                     break
