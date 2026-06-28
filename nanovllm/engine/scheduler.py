@@ -25,6 +25,7 @@ class Scheduler:
         self.drop_probability = 0.3  # Base drop probability
         self.congestion_detected = False
         self.dropped_sequences = set()  # Use set to avoid duplicate seq_ids
+        self.dropped_sequence_objects = {}  # seq_id -> Sequence object, for detailed drop info
         self.step_counter = 0
         
         # 拥塞阈值配置
@@ -238,6 +239,7 @@ class Scheduler:
         
         seq.status = SequenceStatus.DROPPED
         self.dropped_sequences.add(seq.seq_id)
+        self.dropped_sequence_objects[seq.seq_id] = seq  # 保存序列对象用于详细信息
         self.dropped_count += 1
         
         # Clean up resources

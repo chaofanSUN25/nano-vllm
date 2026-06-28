@@ -34,6 +34,13 @@ class Sequence:
         # 新增：用于智能丢弃策略
         self.priority = sampling_params.priority
         self.created_at = time.time()  # 创建时间，用于基于等待时间的丢弃
+        
+        # Layer-level drop 相关信息
+        self.drop_layer = None  # 在哪一层被drop（-1表示未被drop）
+        self.drop_total_layers = None  # 总层数
+        self.drop_progress = None  # drop时的进度(0-1)
+        self.drop_probability = None  # drop时的概率
+        self.drop_phase = None  # "Prefill" 或 "Decode"
 
     def __len__(self):
         return self.num_tokens

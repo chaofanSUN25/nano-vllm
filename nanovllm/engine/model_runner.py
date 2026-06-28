@@ -325,6 +325,14 @@ class ModelRunner:
                 dropped_indices.append(i)
                 seq.status = SequenceStatus.DROPPED
                 phase = "Prefill" if context.is_prefill else "Decode"
+                
+                # 记录 drop 详细信息到 Sequence 对象
+                seq.drop_layer = layer_idx
+                seq.drop_total_layers = total_layers
+                seq.drop_progress = progress
+                seq.drop_probability = adjusted_prob
+                seq.drop_phase = phase
+                
                 print(f"[Layer Drop] Seq {seq.seq_id} dropped at layer {layer_idx}/{total_layers} ({phase}), "
                       f"progress={progress:.1%}, prob={adjusted_prob:.3f}, "
                       f"priority={seq.priority}, prompt={seq.num_prompt_tokens}t")

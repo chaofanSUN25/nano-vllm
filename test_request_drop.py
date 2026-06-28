@@ -103,7 +103,46 @@ def test_request_drop():
     print(f"  总请求数: {len(prompts_with_priority)}")
     print(f"  完成的请求数: {len(outputs)}")
     print(f"  被丢弃的请求数: {len(dropped_seqs)}")
-    print(f"  被丢弃的请求ID: {dropped_seqs}")
+    
+    # 打印被 drop 的 seq 的详细信息
+    if dropped_seqs:
+        print(f"\n  被丢弃的请求详情:")
+        print(f"  {'-'*100}")
+        print(f"  {'Seq ID':<8} {'Layer':<10} {'Phase':<10} {'Progress':<10} {'Prob':<10} {'Priority':<10} {'Prompt':<50}")
+        print(f"  {'-'*100}")
+        
+        for seq_id in sorted(dropped_seqs):
+            # 找到对应的原始请求
+            for i, (prompt, priority) in enumerate(prompts_with_priority):
+                if i == seq_id:
+                    prompt_tokens = len(tokenizer.encode(prompt))
+                    # 获取 drop 详细信息
+                    drop_info = "N/A"
+                    if hasattr(llm.scheduler, 'running'):
+                        # 检查 running 队列
+                        for seq in llm.scheduler.running:
+                            if seq.seq_id == seq_id:
+                                drop_layer = seq.drop_layer if seq.drop_layer is not None else "-"
+                                drop_total = seq.drop_total_layers if seq.drop_total_layers is not None else "-"
+                                drop_phase = seq.drop_phase if seq.drop_phase else "-"
+                                drop_progress = f"{seq.drop_progress:.1%}" if seq.drop_progress is not None else "-"
+                                drop_prob = f"{seq.drop_probability:.3f}" if seq.drop_probability is not None else "-"
+                                drop_info = f"{drop_layer}/{drop_total}"
+                                print(f"  {seq_id:<8} {drop_info:<10} {drop_phase:<10} {drop_progress:<10} {drop_prob:<10} {priority:<10} {prompt[:48]}...")
+                                break
+                        else:
+                            # 检查 waiting 队列
+                            for seq in llm.scheduler.waiting:
+                                if seq.seq_id == seq_id:
+                                    drop_layer = seq.drop_layer if seq.drop_layer is not None else "-"
+                                    drop_total = seq.drop_total_layers if seq.drop_total_layers is not None else "-"
+                                    drop_phase = seq.drop_phase if seq.drop_phase else "-"
+                                    drop_progress = f"{seq.drop_progress:.1%}" if seq.drop_progress is not None else "-"
+                                    drop_prob = f"{seq.drop_probability:.3f}" if seq.drop_probability is not None else "-"
+                                    drop_info = f"{drop_layer}/{drop_total}"
+                                    print(f"  {seq_id:<8} {drop_info:<10} {drop_phase:<10} {drop_progress:<10} {drop_prob:<10} {priority:<10} {prompt[:48]}...")
+                                    break
+                    break
     
     # 输出结果
     print("\n[Step 5] 输出结果（前6个）")
