@@ -40,10 +40,13 @@ class LLMEngine:
         for p in self.ps:
             p.join()
 
-    def add_request(self, prompt: str | list[int], sampling_params: SamplingParams):
+    def add_request(self, prompt: str | list[int], sampling_params: SamplingParams, prompt_map: dict = None):
+        original_prompt = prompt  # 保存原始 prompt
         if isinstance(prompt, str):
             prompt = self.tokenizer.encode(prompt)
         seq = Sequence(prompt, sampling_params)
+        if prompt_map is not None:
+            prompt_map[seq.seq_id] = original_prompt
         self.scheduler.add(seq)
 
     def step(self):
@@ -132,19 +135,16 @@ class LLMEngine:
         pbar = tqdm(total=len(prompts), desc="Generating", dynamic_ncols=True, disable=not use_tqdm)
         if not isinstance(sampling_params, list):
             sampling_params = [sampling_params] * len(prompts)
+        
+        prompt_map = {}  # Track seq_id -> prompt mapping
         for prompt, sp in zip(prompts, sampling_params):
-            self.add_request(prompt, sp)
-        outputs = {}
-        prompt_map = {}  # Track prompts by seq_id
-        prefill_throughput = decode_throughput = 0.
-        # Track seq_id -> prompt mapping
-        seq_counter = 0
-        for prompt, sp in zip(prompts, sampling_params):
-            seq = Sequence(self.tokenizer.encode(prompt) if isinstance(prompt, str) else prompt, sp)
+            encoded_prompt = self.tokenizer.encode(prompt) if isinstance(prompt, str) else prompt
+            seq = Sequence(encoded_prompt, sp)
             prompt_map[seq.seq_id] = prompt
             self.scheduler.add(seq)
-            seq_counter += 1
-        
+        outputs = {}
+        prefill_throughput = decode_throughput = 0.
+
         while not self.is_finished():
             t = perf_counter()
             output, num_tokens = self.step()
