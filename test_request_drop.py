@@ -111,7 +111,10 @@ def test_request_drop():
         print(f"  {'Seq ID':<8} {'Layer':<12} {'Phase':<10} {'Progress':<10} {'Drop Prob':<10} {'Priority':<10} {'Prompt Tokens':<15} {'Prompt':<40}")
         print(f"  {'-'*120}")
         
-        for seq_id in sorted(dropped_seqs):
+        # 按 drop_probability 倒序排列，概率高的先输出
+        sorted_dropped = sorted(dropped_seqs, key=lambda sid: dropped_seq_objects.get(sid, type('obj', (), {'drop_probability': 0})).drop_probability or 0, reverse=True)
+        
+        for seq_id in sorted_dropped:
             # 获取被 drop 的序列对象
             seq = dropped_seq_objects.get(seq_id)
             
